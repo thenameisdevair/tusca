@@ -90,10 +90,15 @@ async def get_deployer_intelligence(
         1,
     )
 
-    # transactions
+   # transactions
     data = await fetch(
         "profiler/address/transactions",
-        {"address": deployer_address, "chain": "ethereum", "pagination": {"page": 1, "per_page": 10}},
+        {
+            "address": deployer_address,
+            "chain": "ethereum",
+            "date": {"from": "2020-01-01", "to": "2026-12-31"},
+            "pagination": {"page": 1, "per_page": 10},
+        },
         1,
     )
 
@@ -107,7 +112,11 @@ async def get_deployer_intelligence(
     # counterparties
     data = await fetch(
         "profiler/address/counterparties",
-        {"address": deployer_address, "chain": "ethereum"},
+        {
+            "address": deployer_address,
+            "chain": "ethereum",
+            "date": {"from": "2020-01-01", "to": "2026-12-31"},
+        },
         5,
     )
     parties = data.get("data", {}).get("counterparties", [])
@@ -163,7 +172,7 @@ async def get_token_signals(
     # token information
     data = await fetch(
         "tgm/token-information",
-        {"token_address": token_address, "chain": chain},
+        {"token_address": token_address, "chain": chain, "timeframe": "24h"},
         1,
     )
 
@@ -177,7 +186,11 @@ async def get_token_signals(
     # who bought and sold
     data = await fetch(
         "tgm/who-bought-sold",
-        {"token_address": token_address, "chain": chain},
+        {
+            "token_address": token_address,
+            "chain": chain,
+            "date": {"from": "2026-01-01", "to": "2026-12-31"},
+        },
         1,
     )
 
@@ -243,10 +256,10 @@ async def get_smart_money_flows(
         5,
     )
 
-    # dex trades
+# dex trades
     data = await fetch(
         "smart-money/dex-trades",
-        {"token_address": token_address, "chain": chain, "limit": 20},
+        {"chains": [chain], "limit": 20},
         5,
     )
     result["dex_trades"] = data.get("data", {}).get("trades", [])
