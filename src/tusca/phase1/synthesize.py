@@ -1,7 +1,8 @@
 import asyncio
 from rich.console import Console
+from tusca.utils.config import config
 from tusca.utils.credits import CreditTracker
-from tusca.utils.markdown import timestamp, table
+from tusca.utils.markdown import timestamp
 from tusca.models.intel import OnchainIntel, DeployerIntel, TVLIntel, TokenSignals
 from tusca.phase1.etherscan import get_contract_identity
 from tusca.phase1.defillama import get_protocol_tvl, get_related_hacks
@@ -12,6 +13,105 @@ from tusca.phase1.nansen import (
 )
 
 console = Console()
+
+
+async def synthesize_with_claude(intel: OnchainIntel, deployer_data: dict, sm_data: dict) -> str:
+    """Generate security-focused risk narrative from onchain signals."""
+    console.print(f"[cyan]→ TUSCA: synthesizing onchain risk narrative[/cyan]")
+
+    parts = []
+
+    # deployer assessment
+    if intel.deployer.suspicious:
+        parts.append(
+            f"🔴 **CRITICAL — Deployer Risk:** The deployer wallet `{intel.deployer.address}` "
+            f"has direct counterparty connections to addresses labeled as exploiters or attackers. "
+            f"Treat all admin functions and proxy upgrade paths as potentially compromised."
+        )
+    else:
+        parts.append(
+            f"**Deployer Assessment:** Contract deployed {intel.deployer.deploy_date or 'unknown'} "
+            f"by `{intel.deployer.address}` ({intel.deployer.tx_count:,} lifetime transactions). "
+            f"{'Contract source is verified on Etherscan.' if intel.deployer.is_verified else '⚠ Contract source is NOT verified.'} "
+            f"No exploit-connected counterparties detected."
+        )
+
+    # economic surface
+    if intel.tvl.tvl_current > 0:
+        if intel.tvl.tvl_7d_change_pct < -20:
+            tvl_note = (
+                f"🔴 TVL dropped {intel.tvl.tvl_7d_change_pct:.1f}% in 7 days — "
+                f"silent drain is a known post-exploit pattern."
+            )
+        elif intel.tvl.tvl_7d_change_pct < -10:
+            tvl_note = f"⚠ TVL declining {intel.tvl.tvl_7d_change_pct:.1f}% in 7 days."
+        else:
+            tvl_note = f"TVL stable ({intel.tvl.tvl_7d_change_pct:+.1f}% 7d)."
+
+        parts.append(
+            f"**Economic Surface:** {intel.tvl.category or 'Unknown'} protocol "
+            f"with ${intel.tvl.tvl_current:,.0f} TVL. {tvl_note}"
+        )
+    else:
+        parts.append(
+            f"**Economic Surface:** Protocol not found on DeFiLlama — new, unlisted, or private. "
+            f"No independent TVL baseline available. Increases audit risk."
+        )
+
+    # smart money
+    direction = intel.token_signals.smart_money_direction
+    if direction == "exiting":
+        parts.append(
+            f"🔴 **Smart Money — EXIT:** ${abs(intel.token_signals.net_flow_usd):,.0f} "
+            f"net outflow from labeled smart money. Pre-exploit exit pattern. Escalate priority."
+        )
+    elif direction == "accumulating":
+        parts.append(
+            f"🟢 **Smart Money — ACCUMULATING:** ${intel.token_signals.net_flow_usd:,.0f} "
+            f"net inflow. Growing institutional interest increases attack incentive."
+        )
+    elif direction == "neutral":
+        parts.append(f"🟡 **Smart Money — NEUTRAL:** No significant directional flow.")
+    else:
+        parts.append(
+            f"**Smart Money:** No token data — contract may be a vault not a tradeable token. "
+            f"Run TGM against the protocol native token address directly."
+        )
+
+    # fresh wallets
+    if intel.token_signals.fresh_wallet_accumulation:
+        parts.append(
+            f"⚠ **Fresh Wallet Accumulation:** Multiple fresh wallets accumulating positions. "
+            f"Associated with sybil attacks and attacker staging. Prioritize MEV vectors."
+        )
+
+    # suspicious holders
+    if intel.token_signals.suspicious_holders:
+        holders_list = "\n".join(f"- `{h}`" for h in intel.token_signals.suspicious_holders)
+        parts.append(
+            f"🔴 **Suspicious Holders:** Exploit-labeled addresses hold positions:\n{holders_list}"
+        )
+
+    # historical hacks
+    if intel.related_hacks:
+        hack_names = ", ".join(h.protocol for h in intel.related_hacks[:3])
+        vuln_types = list(set(h.vuln_type for h in intel.related_hacks if h.vuln_type))
+        parts.append(
+            f"**Historical Patterns:** {len(intel.related_hacks)} prior hacks in "
+            f"{intel.tvl.category} category ({hack_names}). "
+            f"Recurring vulns: {', '.join(vuln_types[:4]) if vuln_types else 'various'}."
+        )
+
+    # audit priority
+    if intel.recommended_threat_classes and intel.recommended_threat_classes[0] != "unknown — manual review required":
+        parts.append(
+            f"**Audit Priority:** {', '.join(f'`{t}`' for t in intel.recommended_threat_classes)}. "
+            f"Feed into PrePosv for targeted question generation."
+        )
+
+    narrative = "\n\n".join(parts)
+    console.print(f"[green]  ✓ narrative complete ({len(narrative)} chars)[/green]")
+    return narrative
 
 
 async def run_phase1(
@@ -30,19 +130,19 @@ async def run_phase1(
         timestamp=timestamp(),
     )
 
-    # step 1 — contract identity (etherscan)
+    # step 1 — contract identity
     intel.deployer = await get_contract_identity(contract_address, chain)
 
-    # step 2 — protocol TVL (defillama)
+    # step 2 — protocol TVL
     intel.tvl = await get_protocol_tvl(contract_address)
 
-    # step 3 — related hacks (defillama)
+    # step 3 — related hacks
     intel.related_hacks = await get_related_hacks(
         intel.tvl.category,
         intel.tvl.protocol_name,
     )
 
-    # step 4 — deployer wallet intelligence (nansen profiler)
+    # step 4 — deployer intelligence
     deployer_data = await get_deployer_intelligence(intel.deployer.address, tracker)
     intel.deployer.labels = deployer_data.get("labels", [])
     intel.deployer.related_wallets = deployer_data.get("related_wallets", [])
@@ -51,16 +151,16 @@ async def run_phase1(
     ]
     intel.deployer.suspicious = deployer_data.get("suspicious", False)
 
-    # step 5 — token signals (nansen TGM)
+    # step 5 — token signals
     intel.token_signals = await get_token_signals(contract_address, chain, tracker)
 
-    # step 6 — smart money flows (nansen smart money)
+    # step 6 — smart money flows
     sm_data = await get_smart_money_flows(contract_address, chain, tracker)
 
-    # step 7 — agent synthesis (nansen agent /fast)
-   # step 7 — local signal-based narrative synthesis
+    # step 7 — narrative synthesis
     intel.agent_narrative = await synthesize_with_claude(intel, deployer_data, sm_data)
-    # derive recommended threat classes from signals
+
+    # step 8 — derive threat classes
     intel.recommended_threat_classes = _derive_threat_classes(intel, deployer_data)
 
     intel.credit_log = tracker.log
@@ -69,73 +169,22 @@ async def run_phase1(
     return intel
 
 
-# def _build_agent_query(intel: OnchainIntel, deployer_data: dict, sm_data: dict) -> str:
-#     """Build the natural language query for Nansen Agent."""
-
-#     hacks_summary = ""
-#     if intel.related_hacks:
-#         hacks_summary = ", ".join(
-#             f"{h.protocol} ({h.vuln_type}, ${h.amount_usd:,.0f})"
-#             for h in intel.related_hacks[:3]
-#         )
-
-#     suspicious_flag = ""
-#     if intel.deployer.suspicious:
-#         suspicious_flag = "The deployer wallet has counterparties connected to known exploiters or attackers."
-
-#     return f"""
-I am auditing a smart contract at address {intel.contract_address} on {intel.chain}.
-
-Protocol context:
-- Name: {intel.tvl.protocol_name or 'unknown'}
-- Category: {intel.tvl.category or 'unknown'}
-- Current TVL: ${intel.tvl.tvl_current:,.0f}
-- TVL 7d change: {intel.tvl.tvl_7d_change_pct}%
-- TVL 30d change: {intel.tvl.tvl_30d_change_pct}%
-
-Deployer: {intel.deployer.address}
-- Verified contract: {intel.deployer.is_verified}
-- Deployed: {intel.deployer.deploy_date}
-- Transaction count: {intel.deployer.tx_count}
-- {suspicious_flag}
-
-Smart money behavior:
-- Direction: {intel.token_signals.smart_money_direction}
-- Net flow USD: ${intel.token_signals.net_flow_usd:,.0f}
-- Fresh wallet accumulation: {intel.token_signals.fresh_wallet_accumulation}
-- Suspicious holders: {len(intel.token_signals.suspicious_holders)}
-
-Related protocol hacks in same category: {hacks_summary or 'none found'}
-
-Based on this onchain data, what are the key risk signals present?
-Are there any behavioral patterns consistent with pre-exploit staging,
-smart money exit ahead of an exploit, or suspicious deployer activity?
-What vulnerability classes should this audit prioritize?
-""".strip()
-
-
 def _derive_threat_classes(intel: OnchainIntel, deployer_data: dict) -> list[str]:
-    """Derive recommended threat classes from onchain signals."""
     classes = []
 
-    # TVL declining fast — fund drainage risk
     if intel.tvl.tvl_7d_change_pct < -10:
         classes.append("fund_drainage")
 
-    # smart money exiting — something may be known
     if intel.token_signals.smart_money_direction == "exiting":
         classes.append("oracle_manipulation")
         classes.append("flash_loan")
 
-    # suspicious holders or counterparties
     if intel.token_signals.suspicious_holders or intel.deployer.suspicious:
         classes.append("access_control")
 
-    # fresh wallet accumulation — sybil / attacker staging
     if intel.token_signals.fresh_wallet_accumulation:
         classes.append("MEV_liquidation")
 
-    # related hacks — inherit their vuln classes
     for hack in intel.related_hacks[:3]:
         vuln = hack.vuln_type.lower()
         if "oracle" in vuln and "oracle_manipulation" not in classes:
@@ -147,7 +196,6 @@ def _derive_threat_classes(intel: OnchainIntel, deployer_data: dict) -> list[str
         if "access" in vuln and "access_control" not in classes:
             classes.append("access_control")
 
-    # always include accounting drift for yield/lending protocols
     if intel.tvl.category.lower() in ["yield aggregator", "lending", "cdp"]:
         if "accounting_drift" not in classes:
             classes.append("accounting_drift")
@@ -156,17 +204,14 @@ def _derive_threat_classes(intel: OnchainIntel, deployer_data: dict) -> list[str
 
 
 def render_onchain_intel(intel: OnchainIntel, tracker: CreditTracker) -> str:
-    """Render OnchainIntel to ONCHAIN-INTEL.md markdown string."""
-
     lines = []
     lines.append(f"# TUSCA Onchain Intelligence Brief")
     lines.append(f"> Target: `{intel.contract_address}` | Chain: {intel.chain} | {intel.timestamp}\n")
     lines.append("---\n")
 
-    # section 1 — protocol identity
     lines.append("## 1. Protocol Identity\n")
-    lines.append(f"| Field | Value |")
-    lines.append(f"|-------|-------|")
+    lines.append("| Field | Value |")
+    lines.append("|-------|-------|")
     lines.append(f"| Contract | `{intel.contract_address}` |")
     lines.append(f"| Name | {intel.deployer.contract_name or 'unknown'} |")
     lines.append(f"| Deployer | `{intel.deployer.address}` |")
@@ -175,85 +220,69 @@ def render_onchain_intel(intel: OnchainIntel, tracker: CreditTracker) -> str:
     lines.append(f"| Deployer Tx Count | {intel.deployer.tx_count:,} |")
     lines.append("")
 
-    # section 2 — economic surface
     lines.append("## 2. Economic Surface\n")
-    lines.append(f"| Metric | Value |")
-    lines.append(f"|--------|-------|")
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
     lines.append(f"| Protocol | {intel.tvl.protocol_name or 'not found on DeFiLlama'} |")
     lines.append(f"| Category | {intel.tvl.category or 'unknown'} |")
     lines.append(f"| TVL Current | ${intel.tvl.tvl_current:,.0f} |")
     lines.append(f"| TVL 7d Change | {intel.tvl.tvl_7d_change_pct:+.2f}% |")
     lines.append(f"| TVL 30d Change | {intel.tvl.tvl_30d_change_pct:+.2f}% |")
-
     if intel.tvl.tvl_7d_change_pct < -10:
-        lines.append(f"\n> ⚠ **Risk flag:** TVL declining {intel.tvl.tvl_7d_change_pct:.1f}% in 7 days with no public explanation.")
+        lines.append(f"\n> ⚠ **Risk flag:** TVL declining {intel.tvl.tvl_7d_change_pct:.1f}% in 7 days.")
     lines.append("")
 
-    # section 3 — historical hack patterns
     lines.append("## 3. Historical Hack Patterns\n")
     if intel.related_hacks:
         lines.append(f"Found {len(intel.related_hacks)} related hacks in category '{intel.tvl.category}':\n")
-        lines.append("| Protocol | Date | Amount Lost | Vulnerability | Technique |")
-        lines.append("|----------|------|-------------|---------------|-----------|")
+        lines.append("| Protocol | Date | Amount Lost | Vulnerability |")
+        lines.append("|----------|------|-------------|---------------|")
         for h in intel.related_hacks:
-            lines.append(f"| {h.protocol} | {h.date} | ${h.amount_usd:,.0f} | {h.vuln_type} | {h.technique} |")
+            lines.append(f"| {h.protocol} | {h.date} | ${h.amount_usd:,.0f} | {h.vuln_type} |")
     else:
         lines.append("No related hacks found for this category.")
     lines.append("")
 
-    # section 4 — deployer trust signals
     lines.append("## 4. Deployer Trust Signals\n")
     trust_flag = "🔴 SUSPICIOUS" if intel.deployer.suspicious else "🟢 CLEAN"
     lines.append(f"**Verdict: {trust_flag}**\n")
-
-    if intel.deployer.labels:
-        lines.append(f"- Labels: {', '.join(intel.deployer.labels)}")
     if intel.deployer.related_wallets:
         lines.append(f"- Related wallets: {len(intel.deployer.related_wallets)}")
         for w in intel.deployer.related_wallets[:5]:
             lines.append(f"  - `{w}`")
     if intel.deployer.suspicious:
-        lines.append(f"\n> ⚠ Deployer counterparties include addresses labeled as exploiters or attackers.")
+        lines.append(f"\n> ⚠ Deployer counterparties include exploit-labeled addresses.")
     lines.append("")
 
-    # section 5 — smart money behavior
     lines.append("## 5. Smart Money Behavior\n")
-    direction_emoji = {
-        "accumulating": "🟢",
-        "exiting": "🔴",
-        "neutral": "🟡",
-    }.get(intel.token_signals.smart_money_direction, "⚪")
-
-    lines.append(f"| Signal | Value |")
-    lines.append(f"|--------|-------|")
-    lines.append(f"| Direction | {direction_emoji} {intel.token_signals.smart_money_direction} |")
+    direction_emoji = {"accumulating": "🟢", "exiting": "🔴", "neutral": "🟡"}.get(
+        intel.token_signals.smart_money_direction, "⚪"
+    )
+    lines.append("| Signal | Value |")
+    lines.append("|--------|-------|")
+    lines.append(f"| Direction | {direction_emoji} {intel.token_signals.smart_money_direction or 'no data'} |")
     lines.append(f"| Net Flow USD | ${intel.token_signals.net_flow_usd:,.0f} |")
     lines.append(f"| Fresh Wallet Accumulation | {'⚠ yes' if intel.token_signals.fresh_wallet_accumulation else 'no'} |")
     lines.append(f"| Notable Holders | {len(intel.token_signals.notable_holders)} |")
     lines.append(f"| Suspicious Holders | {len(intel.token_signals.suspicious_holders)} |")
-
     if intel.token_signals.suspicious_holders:
         lines.append(f"\n**Suspicious holders:**")
         for h in intel.token_signals.suspicious_holders:
             lines.append(f"- `{h}`")
-
     if intel.token_signals.smart_money_direction == "exiting":
-        lines.append(f"\n> ⚠ **Risk flag:** Smart money is exiting. This pattern has preceded exploits in similar protocols.")
+        lines.append(f"\n> ⚠ **Risk flag:** Smart money is exiting.")
     lines.append("")
 
-    # section 6 — onchain risk narrative
     lines.append("## 6. Onchain Risk Narrative\n")
-    lines.append(intel.agent_narrative or "_Agent synthesis unavailable._")
+    lines.append(intel.agent_narrative or "_Narrative unavailable._")
     lines.append("")
 
-    # section 7 — recommended threat classes
     lines.append("## 7. Recommended Threat Classes\n")
-    lines.append("Derived from onchain signals — feed into PrePosv for prioritized question generation:\n")
+    lines.append("Derived from onchain signals — feed into PrePosv:\n")
     for i, tc in enumerate(intel.recommended_threat_classes, 1):
         lines.append(f"{i}. `{tc}`")
     lines.append("")
 
-    # credit usage
     lines.append("---\n")
     lines.append(tracker.summary())
 
