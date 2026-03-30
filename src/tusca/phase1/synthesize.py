@@ -9,7 +9,6 @@ from tusca.phase1.nansen import (
     get_deployer_intelligence,
     get_token_signals,
     get_smart_money_flows,
-    run_agent_fast,
 )
 
 console = Console()
@@ -59,9 +58,8 @@ async def run_phase1(
     sm_data = await get_smart_money_flows(contract_address, chain, tracker)
 
     # step 7 — agent synthesis (nansen agent /fast)
-    query = _build_agent_query(intel, deployer_data, sm_data)
-    intel.agent_narrative = await run_agent_fast(query, tracker)
-
+   # step 7 — local signal-based narrative synthesis
+    intel.agent_narrative = await synthesize_with_claude(intel, deployer_data, sm_data)
     # derive recommended threat classes from signals
     intel.recommended_threat_classes = _derive_threat_classes(intel, deployer_data)
 
@@ -71,21 +69,21 @@ async def run_phase1(
     return intel
 
 
-def _build_agent_query(intel: OnchainIntel, deployer_data: dict, sm_data: dict) -> str:
-    """Build the natural language query for Nansen Agent."""
+# def _build_agent_query(intel: OnchainIntel, deployer_data: dict, sm_data: dict) -> str:
+#     """Build the natural language query for Nansen Agent."""
 
-    hacks_summary = ""
-    if intel.related_hacks:
-        hacks_summary = ", ".join(
-            f"{h.protocol} ({h.vuln_type}, ${h.amount_usd:,.0f})"
-            for h in intel.related_hacks[:3]
-        )
+#     hacks_summary = ""
+#     if intel.related_hacks:
+#         hacks_summary = ", ".join(
+#             f"{h.protocol} ({h.vuln_type}, ${h.amount_usd:,.0f})"
+#             for h in intel.related_hacks[:3]
+#         )
 
-    suspicious_flag = ""
-    if intel.deployer.suspicious:
-        suspicious_flag = "The deployer wallet has counterparties connected to known exploiters or attackers."
+#     suspicious_flag = ""
+#     if intel.deployer.suspicious:
+#         suspicious_flag = "The deployer wallet has counterparties connected to known exploiters or attackers."
 
-    return f"""
+#     return f"""
 I am auditing a smart contract at address {intel.contract_address} on {intel.chain}.
 
 Protocol context:

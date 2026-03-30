@@ -83,30 +83,26 @@ async def get_deployer_intelligence(
                 return resp.json() if resp.status_code == 200 else {}
         return {}
 
-    # current balance
+# current balance
     data = await fetch(
         "profiler/address/current-balance",
         {"address": deployer_address, "chain": "ethereum"},
         1,
     )
-    result["balance"] = data.get("data", {})
 
     # transactions
     data = await fetch(
         "profiler/address/transactions",
-        {"address": deployer_address, "chain": "ethereum"},
+        {"address": deployer_address, "chain": "ethereum", "pagination": {"page": 1, "per_page": 10}},
         1,
     )
-    result["transactions"] = data.get("data", {}).get("transactions", [])
 
     # related wallets
     data = await fetch(
         "profiler/address/related-wallets",
-        {"address": deployer_address},
+        {"address": deployer_address, "chain": "ethereum"},
         1,
     )
-    wallets = data.get("data", {}).get("relatedWallets", [])
-    result["related_wallets"] = [w.get("address", "") for w in wallets[:10]]
 
     # counterparties
     data = await fetch(
@@ -167,48 +163,31 @@ async def get_token_signals(
     # token information
     data = await fetch(
         "tgm/token-information",
-        {"tokenAddress": token_address, "chain": chain},
+        {"token_address": token_address, "chain": chain},
         1,
     )
-    if data:
-        d = data.get("data", {})
-        signals.symbol = d.get("symbol", "")
-        signals.market_cap = float(d.get("marketCap", 0))
 
     # flow intelligence
     data = await fetch(
         "tgm/flow-intelligence",
-        {"tokenAddress": token_address, "chain": chain},
+        {"token_address": token_address, "chain": chain},
         1,
     )
-    if data:
-        sm = data.get("data", {}).get("smartMoney", {})
-        net = sm.get("netFlow", 0)
-        if net > 0:
-            signals.smart_money_direction = "accumulating"
-        elif net < 0:
-            signals.smart_money_direction = "exiting"
-        else:
-            signals.smart_money_direction = "neutral"
-        signals.net_flow_usd = float(net)
 
     # who bought and sold
     data = await fetch(
         "tgm/who-bought-sold",
-        {"tokenAddress": token_address, "chain": chain},
+        {"token_address": token_address, "chain": chain},
         1,
     )
-    if data:
-        buyers = data.get("data", {}).get("buyers", [])
-        fresh = [b for b in buyers if "fresh" in str(b.get("labels", "")).lower()]
-        signals.fresh_wallet_accumulation = len(fresh) > 3
 
     # top holders
     data = await fetch(
         "tgm/holders",
-        {"tokenAddress": token_address, "chain": chain, "limit": 20},
+        {"token_address": token_address, "chain": chain, "limit": 20},
         5,
     )
+
     if data:
         holders = data.get("data", {}).get("holders", [])
         for h in holders:
@@ -257,18 +236,17 @@ async def get_smart_money_flows(
                 return resp.json() if resp.status_code == 200 else {}
         return {}
 
-    # netflows
+# netflows
     data = await fetch(
         "smart-money/netflows",
-        {"tokenAddress": token_address, "chain": chain},
+        {"token_address": token_address, "chain": chain},
         5,
     )
-    result["netflow"] = data.get("data", {})
 
     # dex trades
     data = await fetch(
         "smart-money/dex-trades",
-        {"tokenAddress": token_address, "chain": chain, "limit": 20},
+        {"token_address": token_address, "chain": chain, "limit": 20},
         5,
     )
     result["dex_trades"] = data.get("data", {}).get("trades", [])
