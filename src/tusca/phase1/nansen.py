@@ -228,34 +228,48 @@ async def run_agent_fast(
     full_text = ""
     tool_calls = []
 
-    async with httpx.AsyncClient(timeout=120) as client:
+async with httpx.AsyncClient(timeout=120) as client:
         payload = {"text": query}
         if conversation_id:
             payload["conversation_id"] = conversation_id
 
-        async with client.stream(
-            "POST",
-            f"{config.NANSEN_BASE_URL}/agent/fast",
-            headers=HEADERS,
-            json=payload,
-        ) as response:
-            async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                raw = line[5:].strip()
-                if raw == "[DONE]":
-                    break
-                try:
-                    event = json.loads(raw)
-                    etype = event.get("type")
-                    if etype == "delta":
-                        full_text += event.get("text", "")
-                    elif etype == "tool_call":
-                        tool_calls.append(event.get("name", ""))
-                    elif etype == "error":
-                        console.print(f"[red]  ✗ agent error: {event.get('error')}[/red]")
-                except json.JSONDecodeError:
-                    continue
+        try:
+            async with client.stream(
+                "POST",
+                f"{config.NANSEN_BASE_URL}/agent/fast",
+                headers=HEADERS,
+                json=payload,
+            ) as response:
+                if response.status_code != 200:
+                    console.print(f"[yellow]  ⚠ agent returned {response.status_code}[/yellow]")
+                    return f"Agent unavailable (HTTP {response.status_code})."
+
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    raw = line[5:].strip()
+                    if raw == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(raw)
+                        etype = event.get("type")
+                        if etype == "delta":
+                            chunk = event.get("text", "")
+                            full_text += chunk
+                            if chunk:
+                                console.print(f"[dim]{chunk}[/dim]", end="")
+                        elif etype == "tool_call":
+                            tool_calls.append(event.get("name", ""))
+                            console.print(f"\n[dim]  ↳ tool: {event.get('name')}[/dim]")
+                        elif etype == "finish":
+                            console.print("")
+                        elif etype == "error":
+                            console.print(f"\n[red]  ✗ agent error: {event.get('error')}[/red]")
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            console.print(f"[red]  ✗ agent stream error: {e}[/red]")
+            return f"Agent synthesis failed: {str(e)}"
 
     if tool_calls:
         console.print(f"[dim]  ↳ agent used tools: {', '.join(set(tool_calls))}[/dim]")

@@ -71,30 +71,45 @@ async def get_related_hacks(category: str, protocol_name: str) -> list[HackRecor
     hacks = []
 
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(f"{config.DEFILLAMA_BASE_URL}/hacks")
+        # DeFiLlama hacks endpoint
+        resp = await client.get("https://defillama-datasets.llama.fi/temp/hacks.json")
 
         if resp.status_code != 200:
-            console.print(f"[yellow]  ⚠ DeFiLlama hacks endpoint returned {resp.status_code}[/yellow]")
+            # fallback — try alternate endpoint
+            resp = await client.get(f"{config.DEFILLAMA_BASE_URL}/hacks")
+
+        if resp.status_code != 200:
+            console.print(f"[yellow]  ⚠ DeFiLlama hacks unavailable ({resp.status_code}) — skipping[/yellow]")
             return hacks
 
-        all_hacks = resp.json()
+        try:
+            all_hacks = resp.json()
+        except Exception:
+            console.print(f"[yellow]  ⚠ DeFiLlama hacks response unparseable — skipping[/yellow]")
+            return hacks
 
         for h in all_hacks:
-            hack_category = h.get("category", "").lower()
-            hack_name = h.get("name", "").lower()
+            hack_category = str(h.get("category", "")).lower()
+            hack_name = str(h.get("name", "")).lower()
 
-            category_match = category.lower() in hack_category or hack_category in category.lower()
-            name_match = protocol_name.lower() in hack_name if protocol_name else False
+            category_match = (
+                category.lower() in hack_category or
+                hack_category in category.lower()
+            ) if category else False
+
+            name_match = (
+                protocol_name.lower() in hack_name
+            ) if protocol_name else False
 
             if category_match or name_match:
                 hacks.append(HackRecord(
                     protocol=h.get("name", ""),
-                    date=h.get("date", ""),
-                    amount_usd=float(h.get("funds", 0)),
-                    vuln_type=h.get("vulnerability", ""),
+                    date=str(h.get("date", "")),
+                    amount_usd=float(h.get("fundsLost", h.get("funds", 0))),
+                    vuln_type=h.get("vulnerability", h.get("classification", "")),
                     technique=h.get("technique", h.get("vulnerability", "")),
                 ))
 
         console.print(f"[green]  ✓ found {len(hacks)} related hacks[/green]")
 
-    return hacks[:10]  # cap at 10 most relevant
+    return hacks[:10]
