@@ -119,7 +119,8 @@ async def get_deployer_intelligence(
         },
         5,
     )
-    parties = data.get("data", {}).get("counterparties", [])
+    raw = data.get("data", {})
+    parties = raw if isinstance(raw, list) else raw.get("counterparties", [])
     result["counterparties"] = [
         {
             "address": p.get("address", ""),
