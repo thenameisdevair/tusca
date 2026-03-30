@@ -1,7 +1,7 @@
 import httpx
 from rich.console import Console
-from src.tusca.utils.config import config
-from src.tusca.models.intel import TVLIntel, HackRecord
+from tusca.utils.config import config
+from tusca.models.intel import TVLIntel, HackRecord
 
 console = Console()
 

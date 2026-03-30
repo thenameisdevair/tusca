@@ -1,11 +1,11 @@
 import asyncio
 from rich.console import Console
-from src.tusca.utils.credits import CreditTracker
-from src.tusca.utils.markdown import timestamp, table
-from src.tusca.models.intel import OnchainIntel, DeployerIntel, TVLIntel, TokenSignals
-from src.tusca.phase1.etherscan import get_contract_identity
-from src.tusca.phase1.defillama import get_protocol_tvl, get_related_hacks
-from src.tusca.phase1.nansen import (
+from tusca.utils.credits import CreditTracker
+from tusca.utils.markdown import timestamp, table
+from tusca.models.intel import OnchainIntel, DeployerIntel, TVLIntel, TokenSignals
+from tusca.phase1.etherscan import get_contract_identity
+from tusca.phase1.defillama import get_protocol_tvl, get_related_hacks
+from tusca.phase1.nansen import (
     get_deployer_intelligence,
     get_token_signals,
     get_smart_money_flows,

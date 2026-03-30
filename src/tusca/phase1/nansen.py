@@ -1,9 +1,9 @@
 import httpx
 import json
 from rich.console import Console
-from src.tusca.utils.config import config
-from src.tusca.utils.credits import CreditTracker
-from src.tusca.models.intel import TokenSignals
+from tusca.utils.config import config
+from tusca.utils.credits import CreditTracker
+from tusca.models.intel import TokenSignals
 
 console = Console()
 

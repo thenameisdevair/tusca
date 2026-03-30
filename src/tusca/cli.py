@@ -4,10 +4,10 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 
-from src.tusca.utils.config import config
-from src.tusca.utils.credits import CreditTracker
-from src.tusca.utils.markdown import write_output
-from src.tusca.phase1.synthesize import run_phase1, render_onchain_intel
+from tusca.utils.config import config
+from tusca.utils.credits import CreditTracker
+from tusca.utils.markdown import write_output
+from tusca.phase1.synthesize import run_phase1, render_onchain_intel
 
 app = typer.Typer(
     name="tusca",

@@ -1,7 +1,7 @@
 import httpx
 from rich.console import Console
-from src.tusca.utils.config import config
-from src.tusca.models.intel import DeployerIntel
+from tusca.utils.config import config
+from tusca.models.intel import DeployerIntel
 
 console = Console()
 
